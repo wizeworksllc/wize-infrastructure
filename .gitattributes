@@ -1,0 +1,7 @@
+# Line endings are LF everywhere. The shell scripts in .github/scripts run on
+# Linux runners, and a CRLF line ending breaks them; Terraform fmt and Caddy
+# do not care, but a checkout on Windows would otherwise rewrite every file.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
