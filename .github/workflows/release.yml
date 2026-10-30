@@ -467,7 +467,7 @@ jobs:
             - name: Install the WizeLens collector
               env:
                   WIZELENS_VAULT: ${{ vars.WIZELENS_KEY_VAULT_NAME || 'kv-wizelens-prod-cus' }}
-                  COLLECTOR_CHART: oci://ghcr.io/brandonkorous/charts/wizelens-collector
+                  COLLECTOR_CHART: oci://ghcr.io/wizeworksllc/charts/wizelens-collector
                   COLLECTOR_VERSION: 0.3.0-alpha.14
               run: |
                   set -euo pipefail

@@ -56,7 +56,7 @@ variable "environment" {
 variable "github_owner" {
   description = "GitHub user or org that owns the SPARX repository (the application release this module's `gha` identity serves). Used in descriptions and setup commands; the federated subject is github_subject_prefix."
   type        = string
-  default     = "brandonkorous"
+  default     = "wizeworksllc"
 }
 
 variable "key_vault_name" {

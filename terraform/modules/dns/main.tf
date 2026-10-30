@@ -801,7 +801,7 @@ data "cloudflare_zone" "wize_works" {
 }
 
 # The WizeWorks MARKETING SITE at the apex — a co-tenant in the `wizeworks`
-# namespace, from the brandonkorous/wizeworks repository. Caddy proxies
+# namespace, from the wizeworksllc/wizeworks repository. Caddy proxies
 # wize.works to site.wizeworks.svc.cluster.local:80.
 #
 # `proxied = true` and on-demand TLS, copied from agconn rather than from the
@@ -1002,7 +1002,7 @@ resource "cloudflare_record" "kanninja_hosts" {
 # agconn.com — AGCONN, a FIFTH product on the same cluster
 #
 # A bilingual farmworker platform. Deploys from its own repository
-# (brandonkorous/AgConnect) into its own `agconn` namespace; Caddy reaches it
+# (wizeworksllc/AgConnect) into its own `agconn` namespace; Caddy reaches it
 # cross-namespace, exactly like jotacular and kanNINJA.
 #
 #   agconn.com        the marketing site + PWA  -> web    (agconn namespace)
@@ -1101,7 +1101,7 @@ resource "cloudflare_record" "agconn_hosts" {
 # rocketease.com — RocketEase, a SIXTH product on the same cluster
 # =========================================================================
 # A social marketing operating system. Deploys from its own repository
-# (brandonkorous/RocketEase) into its own `rocketease` namespace; Caddy reaches
+# (wizeworksllc/RocketEase) into its own `rocketease` namespace; Caddy reaches
 # it cross-namespace, exactly like jotacular, kanNINJA and AGCONN.
 #
 #   rocketease.com      the marketing site      -> web       (rocketease namespace)

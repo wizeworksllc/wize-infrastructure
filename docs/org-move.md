@@ -1,27 +1,50 @@
 # Moving a repository into the `wizeworksllc` org
 
-**Version:** 1.0
+**Version:** 1.1
 **Author:** Brandon Korous
-**Last Updated:** 2026-10-29
+**Last Updated:** 2026-10-30
 
-wize-infrastructure was created in `wizeworksllc` from the start. The product
-repositories (sparx, kanNINJA, jotDOJO, RocketEase, AgConnect, WizeLens,
-wizeworks, silicaui) still live under `brandonkorous` and move one at a time.
-This is the checklist for one move.
+wize-infrastructure was created in `wizeworksllc` from the start. On
+2026-10-30 these repositories moved from the `brandonkorous` user to
+`wizeworksllc`: sparx, kanninja, jotdojo, RocketEase, AgConnect, wizelens,
+wizeworks and kanninja-marketplace. silicaui lives in its own org and did not
+move. This is the checklist for the next repository that moves.
+
+## What the 2026-10-30 move found
+
+- **Every moved repository mints the id-qualified subject**,
+  `repo:wizeworksllc@350084568/<repo>@<repo id>`, not the plain form. The repo
+  id does not change in a transfer. `terraform/bootstrap-azure/org-move.tf`
+  trusts both forms for every product, and it was released before the first
+  transfer, so no login failed.
+- **New org packages were private.** Fixed once, in the org settings: Packages,
+  Package creation, Public. Since then a public repository's first push creates
+  a public package. The settings form drops the setting on save while the
+  Private box is disabled; that box must be enabled for the save to stick.
+- **Release-only packages need a copy.** A product whose images or charts are
+  built only by a tag release (wizelens) has nothing at the new path until its
+  next tag. Every existing tag was copied with `crane copy` from a one-off
+  workflow in that repository before the paths changed.
+- **The Go module path did not change.** wizelens' module is still
+  `github.com/brandonkorous/wizelens/go`. It resolves through GitHub's
+  redirect, so no repository named `wizelens` may ever be created under
+  `brandonkorous`.
+- **Package API roots differ.** `/users/<owner>/packages` answers 404 for an
+  org. sparx's image prune picks `/orgs/` or `/users/` from the owner's type.
 
 ## What breaks when a repository moves
 
 1. **Azure login.** Each repository's deploy identity trusts an OIDC subject
-   that starts with the repository's name (`repo:brandonkorous/sparx:...`).
+   that starts with the repository's owner and name (`repo:<owner>/<repo>:...`).
    After the move GitHub mints `repo:wizeworksllc/sparx:...`, Entra matches the
    subject exactly, and every login fails with `AADSTS700213`. Nothing deploys
    until the subject is updated.
 2. **Container image paths.** GHCR packages are owned by the account that
-   pushed them. Images at `ghcr.io/brandonkorous/...` do not move with the
+   pushed them. Images at `ghcr.io/<old owner>/...` do not move with the
    repository. The next build pushes to `ghcr.io/wizeworksllc/...`, and every
    manifest that names the old path keeps pulling the old image.
 3. **Cross-repository checks.** This repository's CI checks sparx out from
-   `vars.SPARX_REPOSITORY` (default `brandonkorous/sparx`). sparx's CI checks
+   `vars.SPARX_REPOSITORY` (default `wizeworksllc/sparx`). sparx's CI checks
    this repository out from `vars.INFRA_REPOSITORY` (default
    `wizeworksllc/wize-infrastructure`).
 4. **Remote kustomize bases.** sparx's `k8s/local/kustomization.yaml` names
@@ -55,7 +78,7 @@ checkouts keep working. The redirect does NOT help items 1 and 2.
    An org can make the prefix id-qualified (`repo:wizeworksllc@<id>/<repo>@<id>`).
    Use exactly what that command implies. Merge, and let this release apply it.
 
-4. **Image paths.** Update every `ghcr.io/brandonkorous/` in the product's
+4. **Image paths.** Update every `ghcr.io/<old owner>/` in the product's
    manifests and workflows to `ghcr.io/wizeworksllc/`. Run the product's
    release once so the images exist at the new path before anything pulls them.
    If the packages are private, the cluster's pull access must be granted on

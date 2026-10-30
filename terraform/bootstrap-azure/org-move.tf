@@ -1,28 +1,31 @@
 # -----------------------------------------------------------------------------
-# The wizeworksllc org move (docs/org-move.md, step 1).
+# The id-qualified OIDC subjects of every product repository in wizeworksllc.
 #
-# Every product's deploy identity trusts an OIDC subject that names the
-# repository's OWNER, and Entra matches that subject exactly. Transferring a
-# repository from brandonkorous to wizeworksllc changes the subject GitHub
-# mints, so without this file each product's first run after its move fails
-# with AADSTS700213 and nothing deploys.
+# The product repositories moved from the brandonkorous user to the wizeworksllc
+# org on 2026-10-30 (docs/org-move.md). Each deploy identity trusts an OIDC
+# subject that names the repository's OWNER, and Entra matches it exactly, so
+# the new subjects were trusted here BEFORE any repository moved.
 #
-# So the NEW subjects are trusted here BEFORE any repository moves, beside the
-# old ones (which the per-product files still own). Both forms are trusted,
-# because which one GitHub mints is decided by GitHub, not by us:
-#
-#   plain  repo:wizeworksllc/<repo>
-#   id     repo:wizeworksllc@<org id>/<repo>@<repo id>
-#
-# A repository keeps its numeric id through a transfer, so the id form is
-# known in advance. wize-infrastructure itself, born in the org, got the id
-# form.
-#
-# AFTER EVERY MOVE IS DONE: read each repository's real prefix
+# Every moved repository was read afterwards
 #   gh api repos/wizeworksllc/<repo>/actions/oidc/customization/sub
-# set it as that product's *_github_subject_prefix, and delete this file. The
-# credential for the form GitHub actually mints then exists twice (once here,
-# once in the product file) for one release, which Entra allows.
+# and every one mints the id-qualified form below:
+#
+#   repo:wizeworksllc@<org id>/<repo>@<repo id>
+#
+# That is the subject every product logs in with, and this file is its home.
+# The `plain` form (repo:wizeworksllc/<repo>) is trusted too. No repository
+# mints it today; it is the form a repository falls back to if its OIDC
+# customization is ever reset.
+#
+# The per-product *_github_subject_prefix defaults still name the old
+# brandonkorous subjects, which nothing mints any more. They are dead but
+# harmless. Pointing them at a wizeworksllc form collides with a credential
+# here (Entra refuses two credentials with one subject on one app), so that
+# cleanup deletes credentials and needs a release with
+# allow_infrastructure_destroy. A person runs that one.
+#
+# A NEW product repository: add it to org_move_repos with its numeric id
+# (gh api repos/wizeworksllc/<repo> --jq .id).
 # -----------------------------------------------------------------------------
 
 locals {

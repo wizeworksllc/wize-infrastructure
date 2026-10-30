@@ -43,7 +43,7 @@ variable "kanninja_github_repository" {
     subdirectory of a `kanninja` monorepo folder; neither path reaches the token.
   EOT
   type        = string
-  default     = "brandonkorous/kanninja"
+  default     = "wizeworksllc/kanninja"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.kanninja_github_repository))

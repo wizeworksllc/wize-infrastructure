@@ -111,7 +111,7 @@ jobs:
 
             - uses: actions/checkout@v4
               with:
-                  repository: ${{ vars.SPARX_REPOSITORY || 'brandonkorous/sparx' }}
+                  repository: ${{ vars.SPARX_REPOSITORY || 'wizeworksllc/sparx' }}
                   path: _sparx
                   sparse-checkout: |
                       wizeworks/packages/events/src

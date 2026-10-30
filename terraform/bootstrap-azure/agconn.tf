@@ -68,7 +68,7 @@ variable "agconn_github_repository" {
     is this value. Only what GitHub serves reaches the token.
   EOT
   type        = string
-  default     = "brandonkorous/AgConnect"
+  default     = "wizeworksllc/AgConnect"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.agconn_github_repository))

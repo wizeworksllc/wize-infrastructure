@@ -46,7 +46,7 @@ variable "rocketease_github_repository" {
     default branch is `main`.
   EOT
   type        = string
-  default     = "brandonkorous/RocketEase"
+  default     = "wizeworksllc/RocketEase"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.rocketease_github_repository))

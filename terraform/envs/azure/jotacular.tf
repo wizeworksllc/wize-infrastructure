@@ -91,7 +91,7 @@ variable "jotacular_github_repository" {
     canonical `owner/repo` GitHub serves does.
   EOT
   type        = string
-  default     = "brandonkorous/jotdojo"
+  default     = "wizeworksllc/jotdojo"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.jotacular_github_repository))

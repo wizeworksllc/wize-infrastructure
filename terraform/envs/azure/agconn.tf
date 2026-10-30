@@ -2,7 +2,7 @@
 # AGCONN — everything a FOURTH product needs from sparx's Azure footprint.
 #
 # AGCONN (agconn.com) is a bilingual farmworker platform. It lives in its own
-# repository (brandonkorous/AgConnect) and deploys from its own pipeline. Like
+# repository (wizeworksllc/AgConnect) and deploys from its own pipeline. Like
 # jotacular and kanNINJA it is a tenant of this subscription, not part of sparx.
 #
 # ONE FILE, deliberately, and it is the removal story. Everything AGCONN owns in

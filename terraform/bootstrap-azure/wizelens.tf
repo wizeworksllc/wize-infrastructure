@@ -38,7 +38,7 @@ variable "wizelens_github_repository" {
     default branch `main`.
   EOT
   type        = string
-  default     = "brandonkorous/wizelens"
+  default     = "wizeworksllc/wizelens"
 }
 
 variable "wizelens_github_subject_prefix" {

@@ -1,7 +1,7 @@
 # =========================================================================
 # wizelens.com + wizelens.dev — WizeLens, a SEVENTH product on the same cluster
 # =========================================================================
-# The profiler from brandonkorous/wizelens. Deploys from its own repository into
+# The profiler from wizeworksllc/wizelens. Deploys from its own repository into
 # its own `wizelens` namespace; Caddy reaches it cross-namespace, exactly like
 # RocketEase.
 #

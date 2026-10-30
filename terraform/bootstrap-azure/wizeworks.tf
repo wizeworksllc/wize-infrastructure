@@ -2,7 +2,7 @@
 # WizeWorks — the CI identity for the PARENT COMPANY's own marketing site.
 #
 # wize.works is a co-tenant on this cluster like jotacular, kanNINJA and AGCONN:
-# its own namespace, its own repository (brandonkorous/wizeworks), its own
+# its own namespace, its own repository (wizeworksllc/wizeworks), its own
 # pipeline, and its own Key Vault.
 #
 # THE VAULT IS SMALL. The site is a static marketing build with no database and
@@ -98,7 +98,7 @@ variable "wizeworks_github_subject_prefix" {
 
 locals {
   wizeworks_count = var.wizeworks_enabled ? 1 : 0
-  wizeworks_repo  = "brandonkorous/wizeworks"
+  wizeworks_repo  = "wizeworksllc/wizeworks"
 }
 
 variable "wizeworks_key_vault_name" {
