@@ -1,0 +1,586 @@
+# THE INFRASTRUCTURE RELEASE. Every push to main.
+#
+#   1 infrastructure   terraform/envs/azure: the cluster, the database servers,
+#                      every product's vault and storage, DNS, the ingress IP,
+#                      the origin certificate
+#     bootstrap        terraform/bootstrap-azure: the identities and role grants
+#                      (its own identity; see that README)
+#   2 cluster          what runs ON the cluster for everyone: the Caddy ingress,
+#                      the WizeLens collector, the database role jotDOJO needs
+#
+# WHY THIS IS ITS OWN REPOSITORY. Until 2026-10-29 every one of these steps was
+# stage 1 of SPARX's release. A Caddy route for kanNINJA or a vault for
+# RocketEase therefore waited behind twenty sparx images building, the sparx
+# schema migrating and the sparx and Piggles containers rolling: about two
+# hours, for a change that touched none of them. And a sparx release could go
+# red on a Terraform plan for a product it does not ship. Now this release takes
+# minutes and ships nothing but infrastructure; each product's own pipeline
+# ships that product.
+#
+# WHAT IS NOT HERE: any product's containers, schema or app secrets. sparx's
+# release (namespace `sparx-prod`) still syncs sparx's secrets, runs its
+# migrations, and applies its own Typesense, PgBouncer and NATS. A product
+# that needs something from here (a vault, a database, a route) gets it from a
+# change to THIS repository, released by THIS pipeline, before its own release
+# relies on it.
+name: Release
+
+on:
+    push:
+        branches: [main]
+
+    workflow_dispatch:
+        inputs:
+            infrastructure:
+                description: "Stage 1 — apply Terraform (envs/azure, then bootstrap-azure)"
+                required: false
+                default: true
+                type: boolean
+            cluster:
+                description: "Stage 2 — apply the ingress, the collector and the shared database roles"
+                required: false
+                default: true
+                type: boolean
+            allow_infrastructure_destroy:
+                description: "Permit a Terraform plan that DELETES resources"
+                required: false
+                default: false
+                type: boolean
+
+concurrency:
+    # Never two at once: two Terraform applies would fight over the state lock,
+    # and two ingress applies over one Recreate Deployment.
+    group: infrastructure-prod
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+    id-token: write # OIDC, to Azure. No stored credential.
+
+env:
+    # The destination. Variables, with today's values as defaults, so a second
+    # environment is variables rather than a forked file.
+    RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP || 'rg-sparx-prod-cus' }}
+    CLUSTER: ${{ vars.AKS_CLUSTER || 'aks-sparx-prod-cus' }}
+    TERRAFORM_DIR: ${{ vars.TERRAFORM_DIR || 'terraform/envs/azure' }}
+    # Where Caddy runs. Named twice — here and in k8s/azure/kustomization.yaml —
+    # and the `cluster` job refuses to apply if the two disagree.
+    INGRESS_NAMESPACE: ${{ vars.INGRESS_NAMESPACE || 'sparx-prod' }}
+    # Short-lived Jobs this release runs for everyone (the jotDOJO role).
+    JOBS_NAMESPACE: wize-infrastructure
+
+jobs:
+    # ---------------------------------------------------------------------------
+    # STAGE 1 — INFRASTRUCTURE. terraform/envs/azure.
+    #
+    # An additive plan applies unattended. A destructive plan stops the release:
+    # `delete` is a destroy and `["delete","create"]` is a REPLACEMENT, which is
+    # the more dangerous of the two because the summary reads "1 to change".
+    # Proceeding takes a manual dispatch with allow_infrastructure_destroy.
+    # ---------------------------------------------------------------------------
+    infrastructure:
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.infrastructure }}
+        runs-on: ubuntu-latest
+        environment: prod
+        timeout-minutes: 60
+        env:
+            ARM_USE_OIDC: "true"
+            ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+            ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+            ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: azure/login@v2
+              with:
+                  client-id: ${{ vars.AZURE_CLIENT_ID }}
+                  tenant-id: ${{ vars.AZURE_TENANT_ID }}
+                  subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+            - uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: "1.9.8"
+                  # The wrapper rewrites stdout, which breaks `terraform show -json`.
+                  terraform_wrapper: false
+
+            # The azurerm backend uses `use_azuread_auth`: the state blob is read
+            # with this run's Entra token, and no storage key exists to leak.
+            - name: Terraform init
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: terraform init -input=false
+
+            # -----------------------------------------------------------------------
+            # Terraform inputs. UNSET MEANS OMITTED, NEVER INVENTED.
+            #
+            # An unset GitHub variable is an EMPTY STRING, and `TF_VAR_x=""`
+            # OVERRIDES the default in variables.tf. So every input is written only
+            # when it has a value, and anything missing falls through to
+            # variables.tf — the only source that knows what this environment was
+            # applied with.
+            #
+            # Not a style choice: a first version of this defaulted the Cloudflare
+            # booleans to "true whenever a token exists". `cloudflare_origin_ca_enabled`
+            # is a separate variable precisely so DNS stays appliable with a token
+            # that cannot sign certificates; forcing it on planned ten resources,
+            # Cloudflare refused six, and the apply failed with two orphaned TLS
+            # resources left in state.
+            # -----------------------------------------------------------------------
+            - name: Resolve Terraform inputs
+              env:
+                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  CLOUDFLARE_ENABLED: ${{ vars.CLOUDFLARE_ENABLED }}
+                  CLOUDFLARE_ORIGIN_CA_ENABLED: ${{ vars.CLOUDFLARE_ORIGIN_CA_ENABLED }}
+                  CLOUDFLARE_WAF_ENABLED: ${{ vars.CLOUDFLARE_WAF_ENABLED }}
+                  OPERATOR_ACCESS_EMAILS: ${{ vars.OPERATOR_ACCESS_EMAILS }}
+                  DKIM_SELECTOR: ${{ vars.SPARX_EMAIL_DKIM_SELECTOR }}
+                  DKIM_VALUE: ${{ vars.SPARX_EMAIL_DKIM_VALUE }}
+                  LOCATION: ${{ vars.AZURE_LOCATION }}
+                  SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+              run: |
+                  set -euo pipefail
+
+                  # $1 = terraform variable name, $2 = value. Empty $2 writes nothing.
+                  put() {
+                    [ -n "$2" ] || { echo "  (omitted) $1 — variables.tf default applies"; return 0; }
+                    echo "TF_VAR_$1=$2" >> "$GITHUB_ENV"
+                    case "$1" in
+                      *token*|*key*|*password*) echo "  set $1" ;;
+                      *) echo "  set $1=$2" ;;
+                    esac
+                  }
+
+                  put subscription_id              "$SUBSCRIPTION_ID"
+                  put environment                  "prod"
+                  put location                     "$LOCATION"
+                  put cloudflare_api_token         "$CLOUDFLARE_API_TOKEN"
+                  put cloudflare_enabled           "$CLOUDFLARE_ENABLED"
+                  put cloudflare_origin_ca_enabled "$CLOUDFLARE_ORIGIN_CA_ENABLED"
+                  put cloudflare_waf_enabled       "$CLOUDFLARE_WAF_ENABLED"
+                  put operator_access_emails       "$OPERATOR_ACCESS_EMAILS"
+                  put sparx_email_dkim_selector    "$DKIM_SELECTOR"
+                  put sparx_email_dkim_value       "$DKIM_VALUE"
+
+            - name: Terraform plan
+              id: plan
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: |
+                  set -euo pipefail
+                  terraform plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan \
+                    && code=0 || code=$?
+
+                  case "$code" in
+                    0) echo 'changes=false' >> "$GITHUB_OUTPUT" ;;
+                    2) echo 'changes=true'  >> "$GITHUB_OUTPUT" ;;
+                    *) exit "$code" ;;
+                  esac
+
+                  terraform show -json tfplan > tfplan.json
+
+            - name: Refuse a destructive plan
+              if: steps.plan.outputs.changes == 'true'
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: |
+                  set -euo pipefail
+                  DESTRUCTIVE=$(jq -r '
+                    [ .resource_changes[]?
+                      | select(.change.actions | index("delete"))
+                      | "\(.change.actions | join("+"))\t\(.address)" ]
+                    | .[]' tfplan.json)
+
+                  {
+                    echo '### Terraform plan — envs/azure'
+                    echo ''
+                    terraform show -no-color tfplan | tail -c 60000 | sed 's/^/    /'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+                  if [ -z "$DESTRUCTIVE" ]; then
+                    echo 'Plan is additive — applying.'
+                    exit 0
+                  fi
+
+                  echo "$DESTRUCTIVE"
+                  if [ '${{ inputs.allow_infrastructure_destroy }}' = 'true' ]; then
+                    echo '::warning::Applying a plan that DESTROYS the resources above — allow_infrastructure_destroy was set.'
+                    exit 0
+                  fi
+
+                  {
+                    echo ''
+                    echo '> [!CAUTION]'
+                    echo '> **The release stopped: this plan destroys infrastructure.**'
+                    echo ''
+                    echo '| action | resource |'
+                    echo '| --- | --- |'
+                    printf '%s\n' "$DESTRUCTIVE" | awk -F'\t' '{ print "| `" $1 "` | `" $2 "` |" }'
+                    echo ''
+                    echo 'A `delete` that nobody asked for is almost always a Terraform *variable* that is'
+                    echo 'unset in this repository, not a real intent to remove something: an unset'
+                    echo 'variable takes the default in `variables.tf`, and several of those defaults turn'
+                    echo 'features off. Check those first.'
+                    echo ''
+                    echo 'If the deletion is genuinely wanted, re-run this workflow manually with'
+                    echo '**allow_infrastructure_destroy** ticked.'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+                  echo '::error::Terraform plan would DESTROY resources. Stopping the release. See the run summary.'
+                  exit 1
+
+            - name: Terraform apply
+              if: steps.plan.outputs.changes == 'true'
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+    # ---------------------------------------------------------------------------
+    # STAGE 1b — BOOTSTRAP. terraform/bootstrap-azure: the identities and role
+    # grants the infrastructure identity is not allowed to make.
+    #
+    # Its OWN identity (terraform/bootstrap-azure/ci.tf), which only this job can
+    # assume: the subject is `environment:bootstrap`, and that environment is
+    # limited to main. No other job ever holds the power to grant a role.
+    #
+    # AFTER infrastructure, because its grants look up vaults envs/azure creates.
+    # Same guard: an additive plan applies, a delete stops the release.
+    # ---------------------------------------------------------------------------
+    bootstrap:
+        needs: infrastructure
+        if: ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || inputs.infrastructure) }}
+        runs-on: ubuntu-latest
+        environment: bootstrap
+        timeout-minutes: 30
+        env:
+            TERRAFORM_DIR: terraform/bootstrap-azure
+            ARM_USE_OIDC: "true"
+            ARM_CLIENT_ID: ${{ vars.BOOTSTRAP_AZURE_CLIENT_ID }}
+            ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+            ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+            TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+        steps:
+            - name: Require the bootstrap identity
+              run: |
+                  if [ -z "$ARM_CLIENT_ID" ]; then
+                    echo "::error::BOOTSTRAP_AZURE_CLIENT_ID is not set. See terraform/bootstrap-azure/README.md (terraform output -raw infra_github_setup)."
+                    exit 1
+                  fi
+
+            - uses: actions/checkout@v4
+
+            - uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: "1.9.8"
+                  terraform_wrapper: false
+
+            - name: Terraform init
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: terraform init -input=false
+
+            - name: Terraform plan
+              id: plan
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: |
+                  set -euo pipefail
+                  terraform plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan \
+                    && code=0 || code=$?
+
+                  case "$code" in
+                    0) echo 'changes=false' >> "$GITHUB_OUTPUT" ;;
+                    2) echo 'changes=true'  >> "$GITHUB_OUTPUT" ;;
+                    *) exit "$code" ;;
+                  esac
+
+                  terraform show -json tfplan > tfplan.json
+
+            # Here a delete is a lost identity or a revoked grant, and a
+            # replacement mints a new client id that a repository's
+            # AZURE_CLIENT_ID still points away from.
+            - name: Refuse a destructive plan
+              if: steps.plan.outputs.changes == 'true'
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: |
+                  set -euo pipefail
+                  DESTRUCTIVE=$(jq -r '
+                    [ .resource_changes[]?
+                      | select(.change.actions | index("delete"))
+                      | "\(.change.actions | join("+"))\t\(.address)" ]
+                    | .[]' tfplan.json)
+
+                  {
+                    echo '### Terraform plan — bootstrap-azure'
+                    echo ''
+                    terraform show -no-color tfplan | tail -c 60000 | sed 's/^/    /'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+                  if [ -z "$DESTRUCTIVE" ]; then
+                    echo 'Plan is additive — applying.'
+                    exit 0
+                  fi
+
+                  echo "$DESTRUCTIVE"
+                  if [ '${{ inputs.allow_infrastructure_destroy }}' = 'true' ]; then
+                    echo '::warning::Applying a bootstrap plan that DESTROYS the resources above — allow_infrastructure_destroy was set.'
+                    exit 0
+                  fi
+
+                  echo '::error::The bootstrap plan would DESTROY resources. Stopping. Re-run by hand with allow_infrastructure_destroy if that is wanted.'
+                  exit 1
+
+            - name: Terraform apply
+              if: steps.plan.outputs.changes == 'true'
+              working-directory: ${{ env.TERRAFORM_DIR }}
+              run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+    # ---------------------------------------------------------------------------
+    # STAGE 2 — CLUSTER. What runs on the cluster for every product.
+    #
+    # AFTER infrastructure, because the ingress Service claims the IP Terraform
+    # reserves and Caddy mounts the origin certificate Terraform writes.
+    # ---------------------------------------------------------------------------
+    cluster:
+        needs: [infrastructure, bootstrap]
+        # A SKIPPED infrastructure stage is a legitimate way to re-run only this
+        # one. A FAILED one is not: the IP or the certificate may not exist.
+        if: >-
+            always() &&
+            needs.infrastructure.result != 'failure' && needs.infrastructure.result != 'cancelled' &&
+            needs.bootstrap.result != 'failure' && needs.bootstrap.result != 'cancelled' &&
+            (github.event_name != 'workflow_dispatch' || inputs.cluster)
+        runs-on: ubuntu-latest
+        environment: prod
+        timeout-minutes: 30
+        env:
+            ARM_USE_OIDC: "true"
+            ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+            ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+            ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: azure/login@v2
+              with:
+                  client-id: ${{ vars.AZURE_CLIENT_ID }}
+                  tenant-id: ${{ vars.AZURE_TENANT_ID }}
+                  subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+            - name: Get cluster credentials
+              run: |
+                  az aks get-credentials --resource-group "$RESOURCE_GROUP" \
+                    --name "$CLUSTER" --overwrite-existing
+                  kubectl version --client
+
+            # -----------------------------------------------------------------------
+            # THE INGRESS. Caddy, the one routing table, the LoadBalancer Service.
+            #
+            # --prune, scoped to THIS repository's own label. `apply` alone cannot
+            # delete, so a resource dropped from the overlay would live forever.
+            # The label value is the whole safety argument: sparx's release applies
+            # two overlays into the same namespace with `sparx-release-infra` and
+            # `sparx-release-apps`, and a shared value would let either release
+            # delete the other's output. scripts/check-ingress.mjs fails CI if a
+            # sparx label ever appears in this render.
+            #
+            # A resource removed from the overlay is pruned on the release AFTER
+            # the one that first labelled it — the label has to exist on the live
+            # object before a selector can match it.
+            # -----------------------------------------------------------------------
+            - name: Apply the ingress
+              run: |
+                  set -euo pipefail
+                  declared=$(awk '/^namespace:/ { print $2; exit }' k8s/azure/kustomization.yaml)
+                  if [ "$declared" != "$INGRESS_NAMESPACE" ]; then
+                    echo "::error::k8s/azure/kustomization.yaml declares namespace '$declared' but INGRESS_NAMESPACE is '$INGRESS_NAMESPACE'."
+                    exit 1
+                  fi
+
+                  kubectl apply -k k8s/azure \
+                    --prune --selector app.kubernetes.io/managed-by=wize-infrastructure
+
+                  # Retry: after a failed roll, `rollout status` exits at once on the
+                  # stale ProgressDeadlineExceeded until the next roll moves a pod.
+                  for _ in $(seq 1 60); do
+                    kubectl -n "$INGRESS_NAMESPACE" rollout status deployment/caddy --timeout=10s >/dev/null 2>&1 && break
+                    sleep 10
+                  done
+                  kubectl -n "$INGRESS_NAMESPACE" rollout status deployment/caddy --timeout=1m
+
+            # The address every product answers on. A missing address is a fault
+            # worth failing on: DNS points at nothing.
+            - name: Report the ingress address
+              run: |
+                  set -euo pipefail
+                  IP=''
+                  for _ in $(seq 1 30); do
+                    IP=$(kubectl get svc caddy -n "$INGRESS_NAMESPACE" \
+                      -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+                    [ -n "$IP" ] && break
+                    sleep 10
+                  done
+
+                  if [ -z "$IP" ]; then
+                    echo "::error::The caddy Service has no LoadBalancer address after 5m. DNS points at nothing."
+                    kubectl describe svc caddy -n "$INGRESS_NAMESPACE" || true
+                    exit 1
+                  fi
+
+                  {
+                    echo '### Ingress'
+                    echo ''
+                    echo "\`$IP\` — DNS points here."
+                    echo ''
+                    echo '| Record | Mode | Why |'
+                    echo '| --- | --- | --- |'
+                    echo '| `*.sparx.zone` | DNS-only | on-demand ACME needs the challenge to reach the origin |'
+                    echo '| `media-direct.sparx.works` | DNS-only | social fetchers reject Cloudflare’s 206 on a Range request |'
+                    echo '| everything else | proxied | Full (strict) |'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
+            # -----------------------------------------------------------------------
+            # The WizeLens collector: node, pod and workload metrics of THIS cluster,
+            # sent to app.wizelens.com, so the Hosts and Kubernetes pages show the
+            # cluster beside the apps' traces.
+            #
+            # Here and not in WizeLens's own deploy, because it reads every
+            # namespace (a cluster-wide, read-only ClusterRole), and product
+            # pipelines keep to their own namespace. It lives in `monitoring`.
+            #
+            # No key yet → a warning and no install, so the release never fails on
+            # it. The chart version is pinned; bump it to take a new collector.
+            # -----------------------------------------------------------------------
+            - name: Install the WizeLens collector
+              env:
+                  WIZELENS_VAULT: ${{ vars.WIZELENS_KEY_VAULT_NAME || 'kv-wizelens-prod-cus' }}
+                  COLLECTOR_CHART: oci://ghcr.io/brandonkorous/charts/wizelens-collector
+                  COLLECTOR_VERSION: 0.3.0-alpha.14
+              run: |
+                  set -euo pipefail
+                  KEY=$(az keyvault secret show --vault-name "$WIZELENS_VAULT" \
+                    --name wizelens-collector-ingest-key --query value -o tsv 2>/dev/null || true)
+                  if [ -z "$KEY" ]; then
+                    echo "::warning::wizelens-collector-ingest-key is not in $WIZELENS_VAULT, so the WizeLens collector is not installed."
+                    exit 0
+                  fi
+                  echo "::add-mask::$KEY"
+                  kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+                  kubectl create secret generic wizelens-ingest -n monitoring \
+                    --from-literal=ingest-key="$KEY" --dry-run=client -o yaml | kubectl apply -f -
+                  unset KEY
+                  helm upgrade --install wizelens-collector "$COLLECTOR_CHART" --version "$COLLECTOR_VERSION" \
+                    --namespace monitoring \
+                    --set existingSecret.name=wizelens-ingest \
+                    --set clusterName="$CLUSTER" \
+                    --set environment=production \
+                    --wait --timeout 5m
+                  kubectl -n monitoring get daemonset,deployment -l app.kubernetes.io/instance=wizelens-collector
+
+            # -----------------------------------------------------------------------
+            # jotDOJO's owner role on the SHARED server's `jotdojo` database.
+            #
+            # A database on Azure Flexible Server is owned by the SERVER ADMIN unless
+            # something says otherwise, and psql-sparx-prod-cus's only admin is
+            # `sparx_owner`. jotDOJO cannot mint its own owner, because its
+            # migrations must already be connected as an owner to run. So whoever
+            # holds the server admin mints one role, hands the database over, and
+            # stops. That used to be sparx's data stage; the server is
+            # infrastructure, and the admin password is this repository's own
+            # Terraform state, so it is done here.
+            #
+            # (jotDOJO has its own server now — `jotacular_own` in
+            # terraform/envs/azure/jotacular.tf. The `jotdojo` database on the shared
+            # server is kept until its data is moved; this keeps its owner correct
+            # until then.)
+            #
+            # The admin URL lives in a Secret in this release's own namespace for
+            # exactly as long as the Job runs, and is deleted after.
+            # -----------------------------------------------------------------------
+            - uses: hashicorp/setup-terraform@v3
+              if: vars.JOTDOJO_KEY_VAULT_NAME != ''
+              with:
+                  terraform_version: "1.9.8"
+                  terraform_wrapper: false
+
+            - name: Ensure jotDOJO owns its database on the shared server
+              if: vars.JOTDOJO_KEY_VAULT_NAME != ''
+              env:
+                  JOTDOJO_VAULT: ${{ vars.JOTDOJO_KEY_VAULT_NAME }}
+              run: |
+                  set -euo pipefail
+
+                  # Written by terraform/envs/azure/jotacular.tf in stage 1. Absent
+                  # means that stage never ran, and a silent skip here would leave
+                  # jotDOJO's DATABASE-ADMIN-URL naming a role that does not exist.
+                  if ! OWNER_PW=$(az keyvault secret show --vault-name "$JOTDOJO_VAULT" \
+                                    --name JOTDOJO-OWNER-PASSWORD --query value -o tsv 2>/dev/null); then
+                    echo "::error::JOTDOJO-OWNER-PASSWORD is absent from $JOTDOJO_VAULT." \
+                         "It is written by terraform/envs/azure/jotacular.tf in the infrastructure stage."
+                    exit 1
+                  fi
+                  echo "::add-mask::$OWNER_PW"
+
+                  terraform -chdir="$TERRAFORM_DIR" init -input=false >/dev/null
+                  ADMIN_URL=$(terraform -chdir="$TERRAFORM_DIR" output -raw database_url_owner)
+                  echo "::add-mask::$ADMIN_URL"
+
+                  # The database name is SWAPPED, anchored to the end of the URL: a
+                  # database name is the LAST path segment, so `$` is what keeps a
+                  # server named `sparxdb` from becoming `jotdojodb`. The guard is not
+                  # belt-and-braces — if the substitution does not match, psql would
+                  # otherwise run against the SPARX database and create the role there.
+                  URL=$(printf '%s' "$ADMIN_URL" | sed -E 's#/sparx(\?.*)?$#/jotdojo\1#')
+                  case "$URL" in
+                    */jotdojo|*/jotdojo\?*) ;;
+                    *) echo "::error::could not derive a jotdojo URL from database_url_owner; refusing to run against the sparx database."; exit 1 ;;
+                  esac
+
+                  kubectl create namespace "$JOBS_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+                  kubectl create secret generic jotdojo-db-owner -n "$JOBS_NAMESPACE" \
+                    --from-literal=ADMIN_URL="$URL" \
+                    --from-literal=OWNER_PASSWORD="$OWNER_PW" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  unset OWNER_PW ADMIN_URL URL
+
+                  kubectl create configmap jotdojo-db-owner-sql -n "$JOBS_NAMESPACE" \
+                    --from-file=jotdojo-bootstrap.sql=sql/jotdojo-bootstrap.sql \
+                    --dry-run=client -o yaml | kubectl apply -f -
+
+                  kubectl delete job jotdojo-db-owner -n "$JOBS_NAMESPACE" --ignore-not-found
+                  # QUOTED heredoc. Unquoted, bash runs command substitution on
+                  # backticks inside the body INCLUDING ones in YAML comments — which
+                  # once spliced the whole process environment into a manifest.
+                  kubectl apply -n "$JOBS_NAMESPACE" -f - <<'YAML'
+                  apiVersion: batch/v1
+                  kind: Job
+                  metadata:
+                    name: jotdojo-db-owner
+                  spec:
+                    backoffLimit: 1
+                    ttlSecondsAfterFinished: 600
+                    template:
+                      spec:
+                        restartPolicy: Never
+                        enableServiceLinks: false
+                        containers:
+                          - name: psql
+                            image: postgres:18-alpine
+                            command: ['sh', '-c']
+                            args:
+                              - psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -v owner_password="$OWNER_PASSWORD" -f /sql/jotdojo-bootstrap.sql
+                            env:
+                              - name: ADMIN_URL
+                                valueFrom:
+                                  secretKeyRef: { name: jotdojo-db-owner, key: ADMIN_URL }
+                              - name: OWNER_PASSWORD
+                                valueFrom:
+                                  secretKeyRef: { name: jotdojo-db-owner, key: OWNER_PASSWORD }
+                            volumeMounts:
+                              - { name: sql, mountPath: /sql, readOnly: true }
+                        volumes:
+                          - name: sql
+                            configMap: { name: jotdojo-db-owner-sql }
+                  YAML
+                  status=0
+                  ./.github/scripts/await-job.sh jotdojo-db-owner "$JOBS_NAMESPACE" 300 || status=$?
+
+                  # The Secret existed only to get two values into one Job.
+                  kubectl delete secret jotdojo-db-owner -n "$JOBS_NAMESPACE" --ignore-not-found
+                  exit "$status"

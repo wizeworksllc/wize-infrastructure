@@ -1,0 +1,24 @@
+# State and saved plans hold every generated password, including the Postgres
+# admin, in plaintext. State lives in the azurerm backend, never on disk here.
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+# All three plan patterns are needed: a plan named after what it does
+# (`tfplan.ingress`) slips past the other two. The release writes `tfplan` and
+# `tfplan.json` into each root.
+tfplan
+tfplan.*
+*.tfplan
+apply.log
+crash.log
+crash.*.log
+# bootstrap-azure's first apply writes `local_override.tf` (see its README).
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+node_modules/
+.DS_Store

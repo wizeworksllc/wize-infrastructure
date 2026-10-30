@@ -1,0 +1,112 @@
+# THE INGRESS ON AZURE — Caddy, the one routing table, and the LoadBalancer
+# Service holding the reserved public IP. Every product on the cluster is
+# reached through this: sparx, Piggles, kanNINJA, jotDOJO, RocketEase,
+# AgConnect, WizeLens, silicaui and wize.works.
+#
+# Applied by this repository's release (stage 2, `cluster`), right after the
+# Terraform that reserves the IP and writes the origin certificate.
+#
+# WHY IT STILL RUNS IN `sparx-prod`. Caddy has lived in sparx's namespace since
+# sparx was the only product, and it stays there for now on purpose:
+#
+#   - Its certificates are on `caddy-data`, a ReadWriteOnce disk. A PVC belongs
+#     to one namespace, so a new namespace starts with an EMPTY disk and every
+#     certificate on it — one per tenant hostname under on-demand TLS — is
+#     re-issued on first request. Every `<slug>.sparx.zone` counts against Let's
+#     Encrypt's 50-per-registered-domain weekly limit, so a large tenant base
+#     re-issuing at once is an outage that lasts a week, not a minute.
+#   - The reserved public IP can be held by ONE Service at a time. Moving means
+#     deleting this Service before the new one can claim the address, so every
+#     hostname goes dark for the gap.
+#
+# Ownership moved; the location did not. sparx's release no longer applies or
+# prunes anything here: its infra overlay stopped emitting the ingress, and its
+# first step hands these objects over by relabelling them to the value below,
+# so its `--prune` can never match them. Moving Caddy to its own namespace is a
+# planned migration with a certificate copy, not a side effect of a refactor.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: sparx-prod
+
+# The prune scope for the ingress. MUST NOT equal either of sparx's values
+# (`sparx-release-infra`, `sparx-release-apps`): all three apply into
+# `sparx-prod`, so a shared value would let one release delete another's
+# output. `includeSelectors: false` because `spec.selector` is immutable on a
+# live Deployment.
+labels:
+  - pairs:
+      app.kubernetes.io/managed-by: wize-infrastructure
+    includeSelectors: false
+
+resources:
+  - ../ingress
+
+patches:
+  # --- Pin the ingress to the RESERVED public IP ------------------------------
+  # `azure-pip-name` is the AKS-supported way to attach an existing public IP,
+  # and it is Azure-specific — which is why it lives here and not in
+  # k8s/ingress/service.yaml. The base Service stays a plain
+  # `type: LoadBalancer` any provider accepts.
+  #
+  # Without it the Service takes an EPHEMERAL address, which changes whenever
+  # the Service is recreated. DNS then points at an address Azure has
+  # reassigned, and nothing in the cluster reports a fault. The IP is reserved
+  # in terraform/envs/azure/ingress.tf, which the release applies immediately
+  # before this — `terraform output ingress_pip_name` is the value below.
+  #
+  # NOT `spec.loadBalancerIP`: deprecated since Kubernetes 1.24, and it
+  # hard-codes the address where this hard-codes only its name.
+  - target: { kind: Service, name: caddy }
+    patch: |-
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: caddy
+        annotations:
+          service.beta.kubernetes.io/azure-pip-name: pip-ingress-sparx-prod-cus
+
+  # --- Storage class for the certificate volume -------------------------------
+  # k8s/ingress/pvc.yaml omits storageClassName so it binds to the cluster
+  # default. On AKS that is `managed-csi` anyway; being explicit documents it.
+  # StandardSSD, not premium: a few kilobytes written once per issuance.
+  - target: { kind: PersistentVolumeClaim, name: caddy-data }
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: caddy-data
+      spec:
+        storageClassName: managed-csi
+
+  # --- Explicit default service account -----------------------------------------
+  # Changes nothing about what Caddy may do: `default` is what a pod gets anyway.
+  # It is here because sparx's overlay set it on every Deployment while it owned
+  # the ingress (its base references a GCP Workload Identity account), so the
+  # LIVE pod template carries it. Dropping it would change the template, and a
+  # changed template restarts a `Recreate` Caddy: every hostname on the cluster
+  # dark for 10-30s on the release that takes ownership. Keeping the rendered
+  # objects identical to what sparx applied is what makes the handover a relabel
+  # and nothing more. Remove it later, on purpose, alongside a change that rolls
+  # Caddy anyway.
+  - target: { kind: Deployment, name: caddy }
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: caddy
+      spec:
+        template:
+          spec:
+            serviceAccountName: default
+
+  # --- No PodDisruptionBudget ---------------------------------------------------
+  # Caddy's pods share one node (its RWO disk), so a minAvailable budget would
+  # block every node drain on the cluster rather than protect anything. This is
+  # the same deletion sparx's overlay made while it owned the ingress.
+  - target: { kind: PodDisruptionBudget, name: caddy }
+    patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: caddy
+      $patch: delete

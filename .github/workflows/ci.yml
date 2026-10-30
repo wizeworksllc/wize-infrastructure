@@ -1,0 +1,133 @@
+# Is the change valid? Every pull request and every push to main, plus a daily
+# run for the checks that compare this repository with sparx.
+name: CI
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    # The cross-repository checks below also run when SPARX changes, from sparx's
+    # own CI. The schedule is the backstop for a drift neither side's pull
+    # request saw (a sparx change merged while this repository's main moved).
+    schedule:
+        - cron: "17 6 * * *"
+    workflow_dispatch:
+
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    terraform:
+        name: Terraform fmt + validate
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        # Cache provider plugins: the cloudflare provider is served from GitHub
+        # release assets, which intermittently 504 (see tf-validate.sh).
+        env:
+            TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: hashicorp/setup-terraform@v3
+              with:
+                  terraform_version: 1.9.8
+
+            - name: Cache Terraform providers
+              uses: actions/cache@v4
+              with:
+                  path: ${{ github.workspace }}/.terraform-plugin-cache
+                  key: tf-providers-${{ hashFiles('terraform/**/*.tf') }}
+                  restore-keys: tf-providers-
+
+            - name: terraform fmt
+              working-directory: terraform
+              run: terraform fmt -check -recursive
+
+            # envs/azure and bootstrap-azure are what the release applies; a break
+            # in either fails a release.
+            #
+            # `init -backend=false` is what lets this run with no cloud credentials:
+            # validation needs the provider schemas, not the state.
+            - name: Validate envs/azure
+              working-directory: terraform/envs/azure
+              run: bash "$GITHUB_WORKSPACE/.github/scripts/tf-validate.sh"
+
+            - name: Validate bootstrap-azure
+              working-directory: terraform/bootstrap-azure
+              run: bash "$GITHUB_WORKSPACE/.github/scripts/tf-validate.sh"
+
+            # GCP. Nothing deploys these, but "we still have the GKE definition" is
+            # only true while it is valid HCL. Both envs call modules/dns, so this
+            # also catches an Azure-motivated change that breaks the other consumer.
+            - name: Validate envs/prod
+              working-directory: terraform/envs/prod
+              run: bash "$GITHUB_WORKSPACE/.github/scripts/tf-validate.sh"
+
+            - name: Validate bootstrap
+              working-directory: terraform/bootstrap
+              run: bash "$GITHUB_WORKSPACE/.github/scripts/tf-validate.sh"
+
+    ingress:
+        name: Ingress + scripts
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-node@v6
+              with:
+                  node-version-file: .nvmrc
+
+            - name: Unit tests for the scripts
+              run: node --test scripts/*.test.mjs
+
+            # kubectl ships on the hosted runner; `kustomize` here renders only.
+            - name: Check the rendered ingress keeps its rules
+              run: node scripts/check-ingress.mjs
+
+            # The ingress serves every hostname of every product; a config Caddy
+            # refuses takes all of them down at once.
+            - name: Validate the Caddyfile and smoke-test its header snippets
+              run: bash .github/scripts/caddy-smoke.sh
+
+            - name: Lint workflow heredocs
+              run: bash .github/scripts/lint-workflow-heredocs.sh
+
+    # -------------------------------------------------------------------------
+    # The checks that compare THIS repository with sparx. sparx's CI runs the same
+    # two scripts against its own tree with this repository checked out, so a
+    # drift fails whichever pull request introduces it.
+    # -------------------------------------------------------------------------
+    sparx-parity:
+        name: sparx parity
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/checkout@v4
+              with:
+                  repository: ${{ vars.SPARX_REPOSITORY || 'brandonkorous/sparx' }}
+                  path: _sparx
+                  sparse-checkout: |
+                      wizeworks/packages/events/src
+                      wizeworks/packages/crm/src
+                      wizeworks/packages/client-ip/src
+
+            - uses: actions/setup-node@v6
+              with:
+                  node-version-file: .nvmrc
+
+            # Caddy and wizeworks/packages/client-ip must trust the same Cloudflare
+            # ranges, or the visitor's address is wrong everywhere behind Caddy.
+            - name: Check Cloudflare ranges match client-ip
+              run: node scripts/check-cloudflare-ranges.mjs --sparx _sparx
+
+            # Every event sparx declares has a topic in the GCP definition, so a
+            # revival does not ship with silently missing topics.
+            - name: Check event/topic parity
+              run: node scripts/check-event-topics.mjs --sparx _sparx

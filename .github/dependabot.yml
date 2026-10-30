@@ -1,0 +1,31 @@
+version: 2
+updates:
+    - package-ecosystem: github-actions
+      directory: "/"
+      schedule:
+          interval: monthly
+      open-pull-requests-limit: 3
+      # A major bump of the Terraform setup action can take the release offline.
+      ignore:
+          - dependency-name: "hashicorp/setup-terraform"
+            update-types: ["version-update:semver-major"]
+
+    # `directories`, not `directory`: the terraform ecosystem reads ONE directory
+    # and does not recurse, and terraform/ holds no `.tf` of its own. Enumerated
+    # by shape so a new module or environment is picked up without editing this.
+    - package-ecosystem: terraform
+      directories:
+          - "/terraform/bootstrap"
+          - "/terraform/bootstrap-azure"
+          - "/terraform/envs/*"
+          - "/terraform/modules/*"
+      schedule:
+          interval: monthly
+      open-pull-requests-limit: 3
+
+    # The pinned Caddy image in k8s/ingress/deployment.yaml.
+    - package-ecosystem: docker
+      directory: "/k8s/ingress"
+      schedule:
+          interval: monthly
+      open-pull-requests-limit: 2
