@@ -73,7 +73,8 @@ variable "infra_github_subject_prefix" {
     RECEIVED, which is the value that belongs here.
   EOT
   type        = string
-  default     = "repo:wizeworksllc/wize-infrastructure"
+  # Read 2026-10-29 from the API above, right after the repository was created.
+  default = "repo:wizeworksllc@350084568/wize-infrastructure@1439341797"
 
   validation {
     condition     = startswith(var.infra_github_subject_prefix, "repo:") && !endswith(var.infra_github_subject_prefix, ":")

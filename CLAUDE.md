@@ -73,6 +73,11 @@ node scripts/check-cloudflare-ranges.mjs --sparx ../sparx.works
 - sparx reads `azure-storage-account` / `azure-storage-key` from its vault;
   `terraform/envs/azure/main.tf` (`media_storage`) writes them. Removing them
   fails sparx's release on purpose.
+- The Cloudflare API token lives in `kv-sparx-prod-cus` as `cloudflare-api-token`,
+  tagged `scope=infrastructure`. This release reads it there (no GitHub
+  secret). sparx's release skips that tag, so app pods never get it. Rotate it
+  with `az keyvault secret set ... --tags scope=infrastructure`; drop the tag
+  and every sparx pod gets DNS control over every product.
 - A new sparx event needs its topic in `terraform/envs/prod/main.tf` here.
   sparx's `pnpm check:events` finds this checkout beside it and fails until the
   topic exists.

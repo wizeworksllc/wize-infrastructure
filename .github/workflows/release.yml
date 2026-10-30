@@ -128,7 +128,13 @@ jobs:
             # -----------------------------------------------------------------------
             - name: Resolve Terraform inputs
               env:
-                  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+                  # The Cloudflare token is NOT a GitHub secret. It lives in the
+                  # sparx vault as `cloudflare-api-token`, tagged
+                  # `scope=infrastructure` so sparx's release does not copy it into
+                  # its app pods, and this identity reads it there (Secrets Officer
+                  # on that vault, bootstrap-azure/infra.tf). One copy, rotated in
+                  # one place.
+                  SPARX_KEY_VAULT_NAME: ${{ vars.SPARX_KEY_VAULT_NAME || 'kv-sparx-prod-cus' }}
                   CLOUDFLARE_ENABLED: ${{ vars.CLOUDFLARE_ENABLED }}
                   CLOUDFLARE_ORIGIN_CA_ENABLED: ${{ vars.CLOUDFLARE_ORIGIN_CA_ENABLED }}
                   CLOUDFLARE_WAF_ENABLED: ${{ vars.CLOUDFLARE_WAF_ENABLED }}
@@ -149,6 +155,17 @@ jobs:
                       *) echo "  set $1=$2" ;;
                     esac
                   }
+
+                  # Fails the release when the vault has no token while Cloudflare is
+                  # on: a plan without it would try to delete every DNS record.
+                  CLOUDFLARE_API_TOKEN=$(az keyvault secret show --vault-name "$SPARX_KEY_VAULT_NAME" \
+                    --name cloudflare-api-token --query value -o tsv 2>/dev/null | tr -d '\r\n' || true)
+                  if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+                    echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+                  elif [ "$CLOUDFLARE_ENABLED" = "true" ]; then
+                    echo "::error::CLOUDFLARE_ENABLED is true but $SPARX_KEY_VAULT_NAME has no cloudflare-api-token."
+                    exit 1
+                  fi
 
                   put subscription_id              "$SUBSCRIPTION_ID"
                   put environment                  "prod"
