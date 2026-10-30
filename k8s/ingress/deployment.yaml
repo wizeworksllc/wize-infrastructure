@@ -51,7 +51,7 @@ spec:
           # and refuses to start on a config that still carries it. The ingress
           # is the one component where an unannounced upgrade takes every
           # hostname down at once.
-          image: caddy:2.11.4-alpine
+          image: caddy:2.11.7-alpine
           ports:
             - name: http
               containerPort: 80
