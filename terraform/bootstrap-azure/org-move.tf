@@ -13,16 +13,11 @@
 #   repo:wizeworksllc@<org id>/<repo>@<repo id>
 #
 # That is the subject every product logs in with, and this file is its home.
-# The `plain` form (repo:wizeworksllc/<repo>) is trusted too. No repository
-# mints it today; it is the form a repository falls back to if its OIDC
-# customization is ever reset.
-#
-# The per-product *_github_subject_prefix defaults still name the old
-# brandonkorous subjects, which nothing mints any more. They are dead but
-# harmless. Pointing them at a wizeworksllc form collides with a credential
-# here (Entra refuses two credentials with one subject on one app), so that
-# cleanup deletes credentials and needs a release with
-# allow_infrastructure_destroy. A person runs that one.
+# The plain form (repo:wizeworksllc/<repo>) is trusted by each product's own
+# file through its *_github_subject_prefix. No repository mints it today; it is
+# the form a repository falls back to if its OIDC customization is reset.
+# Entra refuses two credentials with one subject on one app, so each form lives
+# in exactly one place.
 #
 # A NEW product repository: add it to org_move_repos with its numeric id
 # (gh api repos/wizeworksllc/<repo> --jq .id).
@@ -87,8 +82,7 @@ locals {
   org_move_credentials = merge([
     for product, r in local.org_move_repos : merge([
       for form, prefix in {
-        plain = "repo:${local.org_move_owner}/${r.repo}"
-        id    = "repo:${local.org_move_owner}@${local.org_move_org_id}/${r.repo}@${r.repo_id}"
+        id = "repo:${local.org_move_owner}@${local.org_move_org_id}/${r.repo}@${r.repo_id}"
         } : {
         for s in r.subjects : "${product}/${form}/${s}" => {
           app     = r.app
