@@ -126,7 +126,7 @@ variable "agconn_github_subject_prefix" {
     failure.
   EOT
   type        = string
-  default     = "repo:brandonkorous/AgConnect"
+  default     = "repo:wizeworksllc/AgConnect"
 
   validation {
     condition     = startswith(var.agconn_github_subject_prefix, "repo:")

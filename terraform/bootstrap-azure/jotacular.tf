@@ -138,7 +138,7 @@ variable "jotacular_github_subject_prefix" {
   #
   # Found because an unrelated apply (kanNINJA's identity) planned it as
   # collateral. It was not triggered.
-  default = "repo:brandonkorous@13042540/jotdojo@1341839746"
+  default = "repo:wizeworksllc/jotdojo"
 
   validation {
     condition     = startswith(var.jotacular_github_subject_prefix, "repo:")

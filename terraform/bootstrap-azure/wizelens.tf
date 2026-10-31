@@ -55,7 +55,7 @@ variable "wizelens_github_subject_prefix" {
     If WizeLens ever fails with AADSTS700213, re-run that first.
   EOT
   type        = string
-  default     = "repo:brandonkorous@13042540/wizelens@1421677864"
+  default     = "repo:wizeworksllc/wizelens"
 
   validation {
     condition     = startswith(var.wizelens_github_subject_prefix, "repo:") && !endswith(var.wizelens_github_subject_prefix, ":")

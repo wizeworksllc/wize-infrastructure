@@ -39,7 +39,7 @@ variable "github_subject_prefix" {
     and put `sub_claim_prefix` here verbatim. docs/org-move.md has the order.
   EOT
   type        = string
-  default     = "repo:brandonkorous/sparx"
+  default     = "repo:wizeworksllc/sparx"
 
   validation {
     condition     = startswith(var.github_subject_prefix, "repo:") && !endswith(var.github_subject_prefix, ":")

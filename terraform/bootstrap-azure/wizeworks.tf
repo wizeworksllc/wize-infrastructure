@@ -83,7 +83,7 @@ variable "wizeworks_github_subject_prefix" {
     Re-run that first if deploys start failing with AADSTS700213.
   EOT
   type        = string
-  default     = "repo:brandonkorous@13042540/wizeworks@1349021052"
+  default     = "repo:wizeworksllc/wizeworks"
 
   validation {
     condition     = startswith(var.wizeworks_github_subject_prefix, "repo:")

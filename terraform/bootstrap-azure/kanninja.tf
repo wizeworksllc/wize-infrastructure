@@ -99,7 +99,7 @@ variable "kanninja_github_subject_prefix" {
     this failure.
   EOT
   type        = string
-  default     = "repo:brandonkorous/kanninja"
+  default     = "repo:wizeworksllc/kanninja"
 
   validation {
     condition     = startswith(var.kanninja_github_subject_prefix, "repo:")

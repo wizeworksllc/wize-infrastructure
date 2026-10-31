@@ -101,7 +101,7 @@ variable "rocketease_github_subject_prefix" {
     failure.
   EOT
   type        = string
-  default     = "repo:brandonkorous@13042540/RocketEase@1350407459"
+  default     = "repo:wizeworksllc/RocketEase"
 
   validation {
     condition     = startswith(var.rocketease_github_subject_prefix, "repo:")
