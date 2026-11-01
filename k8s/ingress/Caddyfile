@@ -234,6 +234,17 @@ import mode.caddy
 	reverse_proxy mcp-site.sparx-prod.svc.cluster.local:3200
 }
 
+# MID-MOVE (sparx docs/153, Phase 5). sparx's three apps (workbench, web,
+# market) move out of the platform repository into wizeworksllc/sparx, which
+# deploys them into namespace `sparx` as sparx-workbench, sparx-web and
+# sparx-market. Every host below that serves one of them tries the `sparx`
+# namespace first and falls back to the copy still in `sparx-prod`, the same way
+# Piggles moved in Phase 4: a Service that does not exist yet fails to resolve and
+# one with no ready pod refuses the connection, both dial errors Caddy retries on
+# the next upstream, and fail_duration skips the dead one for 30 seconds. So each
+# app moves when the sparx repository deploys it, with no change here per app.
+# When all three run in `sparx`, drop the sparx-prod upstreams in one change.
+
 # The staff app. Served by the workbench (apps/workbench), which replaced the
 # decommissioned dashboard here. app.sparx.works is also sparx's MCP OAuth
 # authorization-server origin (`SPARX_APP_URL`, which `<BRAND>_ACCOUNT_URL` falls
@@ -243,7 +254,11 @@ import mode.caddy
 {$SX_SCHEME:https}://app.sparx.works {
 	import tls_policy
 	import security_headers
-	reverse_proxy workbench.sparx-prod.svc.cluster.local:3000
+	reverse_proxy sparx-workbench.sparx.svc.cluster.local:3000 workbench.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 # Legacy host from when the workbench ran beside the dashboard. It now lives at
@@ -273,11 +288,18 @@ import mode.caddy
 	# applied to the whole site: `flush_interval -1` disables streaming, which
 	# would break the Server-Sent Events the chat widget uses.
 	@social path */opengraph-image */twitter-image
-	reverse_proxy @social web.sparx-prod.svc.cluster.local:3000 {
+	reverse_proxy @social sparx-web.sparx.svc.cluster.local:3000 web.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
 		flush_interval -1
 	}
 
-	reverse_proxy web.sparx-prod.svc.cluster.local:3000
+	reverse_proxy sparx-web.sparx.svc.cluster.local:3000 web.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 # ----- Piggles (the sister brand, same cluster, namespace `piggles`) -----
@@ -673,7 +695,11 @@ import mode.caddy
 	# The marketplace and partner directory live on sparx.works; the facet crawler hit them here too (SI-7).
 	@platform_pages path /market /market/* /partners/directory /partners/directory/*
 	redir @platform_pages https://sparx.works{uri} permanent
-	reverse_proxy web.sparx-prod.svc.cluster.local:3000
+	reverse_proxy sparx-web.sparx.svc.cluster.local:3000 web.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 # ----- Placeholder domains (301 to the corresponding sparx.works path) -----
@@ -701,7 +727,11 @@ import mode.caddy
 {$SX_SCHEME:https}://sparx.market {
 	import tls_policy
 	import security_headers
-	reverse_proxy market.sparx-prod.svc.cluster.local:3000
+	reverse_proxy sparx-market.sparx.svc.cluster.local:3000 market.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 {$SX_SCHEME:https}://sparx.exchange, {$SX_SCHEME:https}://www.sparx.exchange {
