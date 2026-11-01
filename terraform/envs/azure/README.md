@@ -42,7 +42,7 @@ baseline once burst credits are exhausted, and the moment that bites is a mass
 cold start — 20 containers booting after a rollout. api-rest is known to lose
 that fight: it crashlooped for ~30h on GKE (~400 restarts, exit 137) purely from
 CPU starvation during boot, which is what the 300s `startupProbe` in
-sparx's [k8s/apps/api-rest.yaml](https://github.com/wizeworksllc/sparx/blob/main/k8s/apps/api-rest.yaml) exists to survive.
+sparx's [k8s/apps/api-rest.yaml](https://github.com/wizeworksllc/platform/blob/main/k8s/apps/api-rest.yaml) exists to survive.
 `Standard_D2ads_v5` was the first choice but returns
 `NotAvailableForSubscription` in eastus2/eastus/centralus here.
 
@@ -51,7 +51,7 @@ That single difference is most of why this environment is affordable.
 
 **Postgres is VNet-private**, mirroring the private-IP Cloud SQL it replaces. So
 you cannot reach it from a laptop — migrations run as an in-cluster Job, exactly
-as sparx's [wizeworks/packages/db/CLAUDE.md](https://github.com/wizeworksllc/sparx/blob/main/wizeworks/packages/db/CLAUDE.md) already describes.
+as sparx's [wizeworks/packages/db/CLAUDE.md](https://github.com/wizeworksllc/platform/blob/main/wizeworks/packages/db/CLAUDE.md) already describes.
 
 ## Apply
 
@@ -71,7 +71,7 @@ terraform plan -lock=false
 **The apps cannot connect until this is done.** Terraform creates the
 `sparx_owner` admin login, but `sparx_app` — the unprivileged, `NOBYPASSRLS` role
 every application connection uses — comes from
-sparx's [wizeworks/packages/db/docker/init/01-roles.sql](https://github.com/wizeworksllc/sparx/blob/main/wizeworks/packages/db/docker/init/01-roles.sql).
+sparx's [wizeworks/packages/db/docker/init/01-roles.sql](https://github.com/wizeworksllc/platform/blob/main/wizeworks/packages/db/docker/init/01-roles.sql).
 That file is a **Docker image entrypoint convention**, not a Postgres feature, so
 a managed server will never run it.
 

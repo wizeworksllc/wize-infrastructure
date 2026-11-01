@@ -44,7 +44,8 @@ move. This is the checklist for the next repository that moves.
    repository. The next build pushes to `ghcr.io/wizeworksllc/...`, and every
    manifest that names the old path keeps pulling the old image.
 3. **Cross-repository checks.** This repository's CI checks sparx out from
-   `vars.SPARX_REPOSITORY` (default `wizeworksllc/sparx`). sparx's CI checks
+   `vars.SPARX_REPOSITORY` (default `wizeworksllc/platform`, the repository that
+   was named sparx until sparx docs/153 Phase 5). sparx's CI checks
    this repository out from `vars.INFRA_REPOSITORY` (default
    `wizeworksllc/wize-infrastructure`).
 4. **Remote kustomize bases.** sparx's `k8s/local/kustomization.yaml` names
@@ -84,7 +85,7 @@ checkouts keep working. The redirect does NOT help items 1 and 2.
    If the packages are private, the cluster's pull access must be granted on
    the new packages too.
 
-5. **sparx only:** set `SPARX_REPOSITORY=wizeworksllc/sparx` as a variable in
+5. **sparx only:** set `SPARX_REPOSITORY=wizeworksllc/platform` as a variable in
    this repository, so its CI checks the right sparx out (the redirect would
    cover it, but an explicit name does not depend on it).
 

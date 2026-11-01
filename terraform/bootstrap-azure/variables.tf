@@ -39,7 +39,7 @@ variable "github_subject_prefix" {
     and put `sub_claim_prefix` here verbatim. docs/org-move.md has the order.
   EOT
   type        = string
-  default     = "repo:wizeworksllc/sparx"
+  default     = "repo:wizeworksllc/platform"
 
   validation {
     condition     = startswith(var.github_subject_prefix, "repo:") && !endswith(var.github_subject_prefix, ":")
@@ -121,7 +121,7 @@ variable "github_repository" {
     it fails later as an opaque authentication error in Actions.
   EOT
   type        = string
-  default     = "sparx"
+  default     = "platform"
 }
 
 variable "operator_object_id" {
