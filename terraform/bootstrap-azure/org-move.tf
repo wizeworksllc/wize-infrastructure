@@ -28,19 +28,14 @@ locals {
   org_move_org_id = "350084568"
 
   org_move_repos = {
-    sparx = {
-      enabled  = true
-      app      = azuread_application.gha.id
-      repo     = "sparx"
-      repo_id  = "1251494871"
-      subjects = ["ref:refs/heads/main", "pull_request", "environment:${var.environment}"]
-    }
-    # The same repository under its next name. sparx docs/153 Phase 5 renames
-    # wizeworksllc/sparx to wizeworksllc/platform so a new sparx repository can
-    # take the name. The id does not change and the subject carries the name,
-    # so the renamed repository mints `.../platform@1251494871`, trusted here
-    # BEFORE the rename. `label` keeps the display names apart: Entra needs each
-    # one unique on the app, and these share the `gha` app with the entry above.
+    # The platform repository, which was named sparx until sparx docs/153 Phase 5
+    # renamed it so a new wizeworksllc/sparx could hold sparx's apps. The id did
+    # not change; the subject carries the name, so it mints
+    # `.../platform@1251494871`. It was trusted BEFORE the rename, beside the old
+    # `sparx@1251494871` entry, which was removed after: no repository can mint
+    # that subject again. The new sparx repository has its own id AND its own
+    # identity (sparx-apps.tf), never this one. `label` names its credentials
+    # apart from the ones the old entry held while both existed.
     platform = {
       enabled  = true
       app      = azuread_application.gha.id
