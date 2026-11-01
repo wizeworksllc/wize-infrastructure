@@ -35,6 +35,20 @@ locals {
       repo_id  = "1251494871"
       subjects = ["ref:refs/heads/main", "pull_request", "environment:${var.environment}"]
     }
+    # The same repository under its next name. sparx docs/153 Phase 5 renames
+    # wizeworksllc/sparx to wizeworksllc/platform so a new sparx repository can
+    # take the name. The id does not change and the subject carries the name,
+    # so the renamed repository mints `.../platform@1251494871`, trusted here
+    # BEFORE the rename. `label` keeps the display names apart: Entra needs each
+    # one unique on the app, and these share the `gha` app with the entry above.
+    platform = {
+      enabled  = true
+      app      = azuread_application.gha.id
+      repo     = "platform"
+      repo_id  = "1251494871"
+      label    = "wizeworksllc-platform"
+      subjects = ["ref:refs/heads/main", "pull_request", "environment:${var.environment}"]
+    }
     kanninja = {
       enabled  = local.kanninja_count > 0
       app      = try(azuread_application.kanninja_gha[0].id, "")
@@ -87,6 +101,7 @@ locals {
         for s in r.subjects : "${product}/${form}/${s}" => {
           app     = r.app
           repo    = r.repo
+          label   = try(r.label, local.org_move_owner)
           form    = form
           scope   = s
           subject = "${prefix}:${s}"
@@ -100,7 +115,7 @@ resource "azuread_application_federated_identity_credential" "org_move" {
   for_each = local.org_move_credentials
 
   application_id = each.value.app
-  display_name   = "wizeworksllc-${each.value.form}-${replace(each.value.scope, "/[^A-Za-z0-9-]/", "-")}"
+  display_name   = "${each.value.label}-${each.value.form}-${replace(each.value.scope, "/[^A-Za-z0-9-]/", "-")}"
   description    = "${each.value.scope} in ${local.org_move_owner}/${each.value.repo} (${each.value.form} subject form), trusted ahead of the org move."
   audiences      = ["api://AzureADTokenExchange"]
   issuer         = "https://token.actions.githubusercontent.com"
