@@ -52,11 +52,11 @@
 	# hops, so `{client_ip}` is the first address nobody we trust vouched for. Read
 	# left to right, the first entry is whatever the client typed into the header.
 	# The services and apps resolve the chain the same way, from one copy of these
-	# ranges in code (wizeworks/packages/client-ip), whose test fails if it drifts
-	# from this list.
+	# ranges in code (sparx's wizeworks/packages/client-ip).
+	# scripts/check-cloudflare-ranges.mjs in this repository fails when the two drift.
 	#
 	# Ranges from https://www.cloudflare.com/ips (read 2026-10-17); refresh them
-	# here and in api-rest together if Cloudflare adds any.
+	# here and in client-ip together if Cloudflare adds any.
 	servers {
 		trusted_proxies static private_ranges 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
 		trusted_proxies_strict
@@ -280,7 +280,16 @@ import mode.caddy
 	reverse_proxy web.sparx-prod.svc.cluster.local:3000
 }
 
-# ----- Piggles (the sister brand, same cluster, same namespace) -----
+# ----- Piggles (the sister brand, same cluster, moving to namespace `piggles`) -----
+#
+# MID-MOVE (sparx docs/153, Phase 4). Each host tries the app in namespace
+# `piggles` first and falls back to the copy still in `sparx-prod`. A Service that
+# does not exist yet fails to resolve, and one with no ready pod refuses the
+# connection; both are dial errors, which Caddy retries on the next upstream
+# within lb_try_duration, and fail_duration then skips the dead one for 30
+# seconds. So each app moves when the piggles repository deploys it, with no
+# routing change and no restart here per app. When all three run in `piggles`,
+# drop the sparx-prod upstreams and the three directives in one change.
 #
 # Three registrable domains, and the split between them is load-bearing rather
 # than cosmetic (piggles/CLAUDE.md, "The three surfaces"):
@@ -304,19 +313,31 @@ import mode.caddy
 {$SX_SCHEME:https}://meetpiggles.com, {$SX_SCHEME:https}://www.meetpiggles.com {
 	import tls_policy
 	import piggles_headers
-	reverse_proxy piggles-web.sparx-prod.svc.cluster.local:3000
+	reverse_proxy piggles-web.piggles.svc.cluster.local:3000 piggles-web.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 {$SX_SCHEME:https}://getpiggles.com, {$SX_SCHEME:https}://www.getpiggles.com {
 	import tls_policy
 	import piggles_headers
-	reverse_proxy piggles-account.sparx-prod.svc.cluster.local:3000
+	reverse_proxy piggles-account.piggles.svc.cluster.local:3000 piggles-account.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 {$SX_SCHEME:https}://mypiggles.com, {$SX_SCHEME:https}://www.mypiggles.com {
 	import tls_policy
 	import piggles_headers
-	reverse_proxy piggles-console.sparx-prod.svc.cluster.local:3000
+	reverse_proxy piggles-console.piggles.svc.cluster.local:3000 piggles-console.sparx-prod.svc.cluster.local:3000 {
+		lb_policy first
+		lb_try_duration 5s
+		fail_duration 30s
+	}
 }
 
 # The SAME api-rest the sparx apps use, on a hostname that is not another
