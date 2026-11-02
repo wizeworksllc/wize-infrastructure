@@ -28,14 +28,27 @@ locals {
   org_move_org_id = "350084568"
 
   org_move_repos = {
+    # DEAD, kept only so removing it is its own change. This is the platform
+    # repository under its old name: the id 1251494871 is wizeworksllc/platform
+    # now, which mints `.../platform@1251494871` (the entry below), so no
+    # repository can mint this subject again. The new wizeworksllc/sparx has a
+    # different id (1442332718) and its own identity (sparx-apps.tf). Deleting
+    # it destroys three federated credentials, which the release refuses
+    # without `allow_infrastructure_destroy`, so it goes in a run where that is
+    # chosen on purpose.
+    sparx = {
+      enabled  = true
+      app      = azuread_application.gha.id
+      repo     = "sparx"
+      repo_id  = "1251494871"
+      subjects = ["ref:refs/heads/main", "pull_request", "environment:${var.environment}"]
+    }
     # The platform repository, which was named sparx until sparx docs/153 Phase 5
     # renamed it so a new wizeworksllc/sparx could hold sparx's apps. The id did
     # not change; the subject carries the name, so it mints
-    # `.../platform@1251494871`. It was trusted BEFORE the rename, beside the old
-    # `sparx@1251494871` entry, which was removed after: no repository can mint
-    # that subject again. The new sparx repository has its own id AND its own
-    # identity (sparx-apps.tf), never this one. `label` names its credentials
-    # apart from the ones the old entry held while both existed.
+    # `.../platform@1251494871`, trusted here BEFORE the rename. `label` keeps the
+    # display names apart from the entry above: Entra needs each one unique on
+    # the app, and both share the `gha` app.
     platform = {
       enabled  = true
       app      = azuread_application.gha.id
